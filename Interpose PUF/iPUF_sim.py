@@ -1,51 +1,82 @@
-from array import *
+from array import array
 from pypuf.simulation import InterposePUF
+from pypuf.metrics import accuracy, similarity
+from pypuf.io import ChallengeResponseSet, random_inputs
 import numpy as np
-from pypuf.io import random_inputs
-
 import matplotlib
 import matplotlib.pyplot as plt
-from matplotlib import cm
-from matplotlib.ticker import LinearLocator
 
-Num_of_challenges=1000
-size_tab = np.array([8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128 ],  dtype = 'int')
-noisiness_tab = np.array([0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],   dtype = 'float')
+# Parametry eksperymentu
+Num_of_challenges = 1000
+seed = 1
+size_tab = np.array([8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128], dtype='int')
+noisiness_tab = np.array([0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0], dtype='float')
 
-#Rozkład odpowiedzi IPUF, oddzielnie dla "0" i "1"
-Z0 = np.empty(shape=[len(size_tab), len(noisiness_tab)],   dtype = 'float')
-Z1 = np.empty(shape=[len(size_tab), len(noisiness_tab)],   dtype = 'float')
+# Macierz do przechowywania wyników
+Z = np.empty(shape=[len(size_tab), len(noisiness_tab)], dtype='float')
 
+# Trzy konkretne przypadki do testowania
+test_cases = [(4, 4), (6, 6), (8, 8)]
 
-for size in range(len(size_tab)):
-    for noise in range(len(noisiness_tab)):
-        print ("Rozmiar APUF", size_tab[size], "Noisiness", noisiness_tab[noise])
-        
-        puf = InterposePUF(n=size_tab[size], k_down=8, seed=1, noisiness=noisiness_tab[noise])
-        r = puf.eval(random_inputs(n=size_tab[size], N=Num_of_challenges, seed=1))
-        
-        hist, bin_edges = np.histogram(r,bins=2)
-        print(hist)
-       
-        Z0[size][noise] = hist[0]
-        Z1[size][noise] = hist[1]
-        print("---------------------------------------")
+results = []
 
-X, Y = np.meshgrid(size_tab, noisiness_tab, indexing='ij')
+for k_up, k_down in test_cases:
+    # Pętla po różnych rozmiarach PUF
+    for size in range(len(size_tab)):
+        # Pętla po różnych wartościach szumu
+        for noise in range(len(noisiness_tab)):
+            print("Rozmiar IPUF:", size_tab[size], "Noisiness:", noisiness_tab[noise], "k_up:", k_up, "k_down:", k_down)
+            
+            # Tworzenie dwóch instancji Interpose PUF z różnymi seedami
+            puf = InterposePUF(n=size_tab[size], k_up=k_up, k_down=k_down, seed=seed, noisiness=noisiness_tab[noise])
+            puf2 = InterposePUF(n=size_tab[size], k_up=k_up, k_down=k_down, seed=seed+1, noisiness=noisiness_tab[noise])
+            
+            # Generowanie losowych wyzwań
+            r = puf.eval(random_inputs(n=size_tab[size], N=Num_of_challenges, seed=seed))
+            
+            # Tworzenie zestawu testowego
+            test_set = ChallengeResponseSet.from_simulation(puf, N=Num_of_challenges, seed=seed)
+            
+            # Generowanie histogramu odpowiedzi
+            hist, bin_edges = np.histogram(r, bins=2)
+            print(hist)
+            
+            # Obliczanie dokładności (accuracy) i podobieństwa (similarity)
+            acc = accuracy(puf, test_set)
+            puf_distance = similarity(puf, puf2, seed=31415)
+            print("accuracy:", acc, "distance:", puf_distance, "size:", size_tab[size], "Noisiness:", noisiness_tab[noise])
+            Z[size][noise] = puf_distance
 
-wykres = matplotlib.pyplot.figure()
-w = wykres.add_subplot(projection='3d')
-w.set_proj_type('ortho')
-w.view_init(elev=25, azim=60)
-#print (np.amin(Z0), np.amax(Z0), np.amin(Z1), np.amax(Z1))
+            print("---------------------------------------")
 
-#w.plot_surface(X, Y, Z0, cmap=plt.cm.Blues, linewidth=.5, rstride=1, cstride=1)
-#w.plot_surface(X, Y, Z1, cmap=plt.cm.Reds, linewidth=.5, rstride=1, cstride=1)
+    # Tworzenie wykresu 3D
+    X, Y = np.meshgrid(size_tab, noisiness_tab, indexing='ij')
 
-#w.plot_wireframe( X,Y, Z0, rstride=1, cstride=1,color='#FF0000')
-w.plot_wireframe( X,Y, Z1, rstride=1, cstride=1,color='#0000FF')
+    wykres = matplotlib.pyplot.figure()
+    w = wykres.add_subplot(projection='3d')
+    w.set_proj_type('ortho')
+    w.view_init(elev=30, azim=45)
 
+    # Rysowanie powierzchni
+    w.plot_surface(X, Y, Z, cmap=plt.cm.Blues, linewidth=.5, rstride=1, cstride=1)
 
+    # Dodawanie do wyników
+    results.append((k_up, k_down, Z.copy()))
 
-#plt.show()
-plt.savefig('iPUF_zeros_ones.png', dpi=300)
+    # Zapis wykresu do pliku
+    plt.savefig(f'iPUF_dist_kup{k_up}_kdown{k_down}.png', dpi=300)
+
+# Zwrócenie trzech przypadków
+for i, result in enumerate(results[:3]):
+    k_up, k_down, Z = result
+    print(f"Przypadek {i+1}: k_up={k_up}, k_down={k_down}")
+    X, Y = np.meshgrid(size_tab, noisiness_tab, indexing='ij')
+
+    plt.figure()
+    ax = plt.subplot(projection='3d')
+    ax.plot_surface(X, Y, Z, cmap=plt.cm.Blues, linewidth=.5, rstride=1, cstride=1)
+    plt.title(f'Interpose PUF - k_up={k_up}, k_down={k_down}')
+    plt.xlabel('PUF Size')
+    plt.ylabel('Noisiness')
+    ax.set_zlabel('Distance')
+    plt.show()
